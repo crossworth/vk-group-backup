@@ -40,5 +40,5 @@ jobs:
           echo IMAGE_ID=$IMAGE_ID
           echo VERSION=$VERSION
 
-          docker tag image $IMAGE_ID:$VERSION
+          docker tag vk-group-backup-queue-all-topics $IMAGE_ID:$VERSION
           docker push $IMAGE_ID:$VERSION
