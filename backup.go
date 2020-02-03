@@ -74,6 +74,11 @@ func New(groupID int, userEmail string, userPassword string, opts ...Option) (*V
 		if err != nil {
 			return vgb, err
 		}
+
+		err = vgb.mongo.Ping(vgb.ctx, nil)
+		if err != nil {
+			return vgb, err
+		}
 	}
 
 	return vgb, nil
