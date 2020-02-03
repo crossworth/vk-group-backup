@@ -287,7 +287,7 @@ func vkCommentToComment(comment vkapi.TopicComment) Comment {
 		case "video":
 			cmt.Attachments = append(cmt.Attachments, fmt.Sprintf("https://vk.com/video?z=video%d_%d%%2F%s", comment.Attachments[i].Video.OwnerID, comment.Attachments[i].Video.ID, comment.Attachments[i].Video.AccessKey))
 		case "audio":
-			cmt.Attachments = append(cmt.Attachments, comment.Attachments[0].Audio.Url)
+			cmt.Attachments = append(cmt.Attachments, comment.Attachments[i].Audio.Url)
 		}
 	}
 
