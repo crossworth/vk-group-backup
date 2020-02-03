@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Build worker image
-        run: docker build . --file queue-all-topics.Dockerfile --tag worker
+        run: docker build . --file worker.Dockerfile --tag worker
 
       - name: Log into registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u ${{ github.actor }} --password-stdin

@@ -64,7 +64,7 @@ func init() {
 	}
 
 	if vkDevice == "" {
-		vkDevice = "iPhone"
+		vkDevice = "android"
 	}
 
 	vkDevice = strings.ToLower(vkDevice)
@@ -112,6 +112,8 @@ func main() {
 		device = vkapi.DeviceAndroid
 	case "wphone":
 		device = vkapi.DeviceWPhone
+	default:
+		device = vkapi.DeviceIPhone
 	}
 
 	client, err := vgb.New(vkGroupIDInt, vkUserEmail, vkUserPassword,

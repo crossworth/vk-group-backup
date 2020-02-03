@@ -18,15 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Build vk-group-backup-queue-all-topics image
-        run: docker build . --file queue-all-topics.Dockerfile --tag vk-group-backup-queue-all-topics
+      - name: Build queue-all-topics image
+        run: docker build . --file queue-all-topics.Dockerfile --tag queue-all-topics
 
       - name: Log into registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u ${{ github.actor }} --password-stdin
 
-      - name: Push vk-group-backup-queue-all-topics image
+      - name: Push queue-all-topics image
         run: |
-          IMAGE_ID=docker.pkg.github.com/${{ github.repository }}/vk-group-backup-queue-all-topics
+          IMAGE_ID=docker.pkg.github.com/${{ github.repository }}/queue-all-topics
 
           # Strip git ref prefix from version
           VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
@@ -40,5 +40,5 @@ jobs:
           echo IMAGE_ID=$IMAGE_ID
           echo VERSION=$VERSION
 
-          docker tag vk-group-backup-queue-all-topics $IMAGE_ID:$VERSION
+          docker tag queue-all-topics $IMAGE_ID:$VERSION
           docker push $IMAGE_ID:$VERSION
