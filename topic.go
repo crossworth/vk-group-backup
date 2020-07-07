@@ -1,7 +1,6 @@
 package vgb
 
 import (
-	"context"
 	"net/url"
 	"strconv"
 	"time"
@@ -9,70 +8,81 @@ import (
 	vkapi "github.com/himidori/golang-vk-api"
 )
 
-func GetRecentTopicsIDs(ctx context.Context, client *vkapi.VKClient, pullRecentInterval time.Duration, groupID int) (<-chan int, <-chan error) {
-	topicIDChan := make(chan int)
+func GetRecentTopicsIDs(client *vkapi.VKClient, groupID int, continuousMode bool) (<-chan vkapi.Topic, <-chan error) {
+	topicChan := make(chan vkapi.Topic)
 	errorChan := make(chan error)
 
 	go func() {
+		params := url.Values{}
+		params.Set("order", "1")
+
 		for {
-			select {
-			case <-time.After(pullRecentInterval):
-				params := url.Values{}
-				params.Set("order", "1")
-				topics, err := client.BoardGetTopics(groupID, 100, params)
-				if err != nil {
-					errorChan <- err
-					return
-				}
-
-				for i := range topics.Topics {
-					topicIDChan <- topics.Topics[i].ID
-				}
-
-			case <-ctx.Done():
-				close(topicIDChan)
-				close(errorChan)
+			topics, err := client.BoardGetTopics(groupID, 100, params)
+			if err != nil {
+				errorChan <- err
 				return
 			}
+
+			for i := range topics.Topics {
+				topicChan <- *topics.Topics[i]
+			}
+
+			if !continuousMode {
+				break
+			}
+
+			time.Sleep(100 * time.Millisecond)
 		}
+
+		close(topicChan)
+		close(errorChan)
 	}()
 
-	return topicIDChan, errorChan
+	return topicChan, errorChan
 }
 
-func GetAllTopicIds(ctx context.Context, client *vkapi.VKClient, pullRecentInterval time.Duration, groupID int) (<-chan int, <-chan error) {
-	topicIDChan := make(chan int)
+func GetAllTopicIds(client *vkapi.VKClient, groupID int, continuousMode bool) (<-chan vkapi.Topic, <-chan error) {
+	topicChan := make(chan vkapi.Topic)
 	errorChan := make(chan error)
 
 	go func() {
 		params := url.Values{}
 		params.Set("order", "-2")
-		skip := 0
-		total := 0
 
 		for {
-			params.Set("offset", strconv.Itoa(skip))
-			topics, err := client.BoardGetTopics(groupID, 100, params)
-			if err != nil {
-				errorChan <- err
-				continue
+			skip := 0
+			total := 0
+
+			for {
+				params.Set("offset", strconv.Itoa(skip))
+				topics, err := client.BoardGetTopics(groupID, 100, params)
+				if err != nil {
+					errorChan <- err
+					continue
+				}
+
+				for i := range topics.Topics {
+					topicChan <- *topics.Topics[i]
+				}
+
+				total += len(topics.Topics)
+				if total >= topics.Count {
+					break
+				}
+
+				skip += 100
 			}
 
-			for i := range topics.Topics {
-				topicIDChan <- topics.Topics[i].ID
-			}
-
-			total += len(topics.Topics)
-			if total >= topics.Count {
+			if !continuousMode {
 				break
 			}
 
-			skip += 100
+			time.Sleep(100 * time.Millisecond)
 		}
 
-		close(topicIDChan)
+		close(topicChan)
 		close(errorChan)
 	}()
 
-	return topicIDChan, errorChan
+	return topicChan, errorChan
 }

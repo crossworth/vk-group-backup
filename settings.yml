@@ -1,0 +1,9 @@
+groupID: 0
+mode: all
+output: backup
+continuousMode: true
+accounts:
+  - email: account1@email.com
+    password: passwordForAccount1
+  - email: account2@email.com
+    password: passwordForAccount2
