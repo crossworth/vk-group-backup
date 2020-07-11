@@ -55,6 +55,7 @@ func GetAllTopicIds(client *vkapi.VKClient, groupID int, continuousMode bool) (<
 
 			for {
 				params.Set("offset", strconv.Itoa(skip))
+
 				topics, err := client.BoardGetTopics(groupID, 100, params)
 				if err != nil {
 					errorChan <- err
@@ -66,6 +67,7 @@ func GetAllTopicIds(client *vkapi.VKClient, groupID int, continuousMode bool) (<
 				}
 
 				total += len(topics.Topics)
+
 				if total >= topics.Count {
 					break
 				}

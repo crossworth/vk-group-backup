@@ -1,12 +1,8 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -15,6 +11,7 @@ import (
 	vkapi "github.com/himidori/golang-vk-api"
 
 	vgb "github.com/crossworth/vk-group-backup"
+	"github.com/crossworth/vk-group-backup/storage"
 )
 
 type Account struct {
@@ -27,16 +24,18 @@ type Settings struct {
 	Mode           string    `yaml:"mode"`
 	Output         string    `yaml:"output"`
 	Accounts       []Account `yaml:"accounts"`
-	ContinuousMode bool      `yaml: "continuousMode"`
+	ContinuousMode bool      `yaml:"continuousMode"`
 }
 
 const settingsFile = "settings.yml"
+
+var wg sync.WaitGroup
 
 func main() {
 	settings := Settings{
 		GroupID:        0,
 		Mode:           "all",
-		Output:         "backup",
+		Output:         "file://backup",
 		Accounts:       nil,
 		ContinuousMode: false,
 	}
@@ -72,12 +71,18 @@ func main() {
 	}
 
 	if settings.Output == "" {
-		settings.Output = "backup"
+		settings.Output = "file://backup"
 	}
 
 	if settings.GroupID == 0 {
 		log.Fatalf("you must provide a valid group ID")
 	}
+
+	log.Printf("Mode: %s\n", settings.Mode)
+	log.Printf("Output: %s\n", settings.Output)
+	log.Printf("GroupID: %d\n", settings.GroupID)
+	log.Printf("ContinuousMode: %t\n", settings.ContinuousMode)
+	log.Printf("Number of accounts: %d\n", len(settings.Accounts))
 
 	var accountsPoll []*vkapi.VKClient
 
@@ -106,6 +111,22 @@ func main() {
 		log.Fatalf("to run we need at least two clients on the poll (1 account = 3 clients)")
 	}
 
+	var topicStorage storage.Storage
+
+	if strings.HasPrefix(settings.Output, "file://") {
+		topicStorage, err = storage.NewFileStorage(settings.Output, settings.GroupID)
+		if err != nil {
+			log.Fatalf("could not create file storage, %v", err)
+		}
+	} else if strings.HasPrefix(settings.Output, "postgres://") {
+		topicStorage, err = storage.NewPostgreSQL(settings.Output)
+		if err != nil {
+			log.Fatalf("could not create PostgreSQL storage, %v", err)
+		}
+	} else {
+		log.Fatalf("output type not recognized, %s", settings.Output)
+	}
+
 	var topicChan <-chan vkapi.Topic
 	var errorChan <-chan error
 
@@ -117,69 +138,66 @@ func main() {
 
 	go func() {
 		for err := range errorChan {
-			log.Printf("error getting Topic ID: %v\n", err)
+			log.Printf("error getting topic: %v\n", err)
 		}
 	}()
-
-	_ = os.MkdirAll(settings.Output, os.ModePerm)
-
-	var wg sync.WaitGroup
 
 	wg.Add(len(accountsPoll) - 1)
 
 	// skip the first account since its been used to get the posts
 	for i, account := range accountsPoll[1:] {
-		go work(i, topicChan, account, settings.GroupID, settings.Output)
+		go work(i, topicStorage, topicChan, account, settings.GroupID)
 	}
 
 	wg.Wait()
+	log.Println("done")
 }
 
-func work(workerID int, topicChan <-chan vkapi.Topic, client *vkapi.VKClient, groupID int, outputDir string) {
+func work(workerID int, topicStorage storage.Storage, topicChan <-chan vkapi.Topic, client *vkapi.VKClient, groupID int) {
 	for vkapiTopic := range topicChan {
-		log.Printf("worker %d: downloading topic with ID: %d\n", workerID, vkapiTopic.ID)
+		log.Printf("worker %d: checking topic %d\n", workerID, vkapiTopic.ID)
 
-		fileName := fmt.Sprintf("%s/%d_%d_%d.json", outputDir, groupID, vkapiTopic.ID, vkapiTopic.Updated)
+		updating := false
 
-		if fileExists(fileName) {
-			log.Printf("worker %d: topic %d already updated\n", workerID, vkapiTopic.ID)
+		topicFromStorage, err := topicStorage.Find(vkapiTopic.ID)
+		if err != nil {
+			log.Printf("worker %d:error reading topic %d from storage, %v\n", workerID, vkapiTopic.ID, err)
 			continue
 		}
+
+		if topicFromStorage.ID != 0 && vkapiTopic.Updated == topicFromStorage.UpdatedAt {
+			log.Printf("worker %d:topic %d already updated\n", workerID, topicFromStorage.ID)
+			continue
+		}
+
+		if topicFromStorage.UpdatedAt > vkapiTopic.Updated {
+			log.Printf("worker %d:topic %d is older than topic from database\n", workerID, topicFromStorage.ID)
+			continue
+		}
+
+		if topicFromStorage.ID != 0 {
+			updating = true
+		}
+
+		log.Printf("worker %d: downloading topic %d\n", workerID, vkapiTopic.ID)
 
 		topic, err := topicToJSON.SaveTopic(client, groupID, vkapiTopic.ID)
 		if err != nil {
-			log.Printf("worker %d: error downloading Topic wiht ID: %d, %v\n", workerID, vkapiTopic.ID, err)
+			log.Printf("worker %d: error downloading topic %d, %v\n", workerID, vkapiTopic.ID, err)
 			continue
 		}
 
-		// delete older version
-		files, err := filepath.Glob(fmt.Sprintf("%s/%d_%d_*.json", outputDir, groupID, vkapiTopic.ID))
-		for _, file := range files {
-			err = os.Remove(file)
-			if err != nil {
-				log.Printf("worker %d: could not delete file %s, %v\n", workerID, file, err)
-				continue
-			}
-		}
-
-		data, err := json.Marshal(topic)
+		err = topicStorage.Save(topic)
 		if err != nil {
-			log.Printf("worker %d: error encoding Topic %d to json, %v\n", workerID, vkapiTopic.ID, err)
+			log.Printf("worker %d: error saving topic %d on storage, %v\n", workerID, vkapiTopic.ID, err)
 			continue
 		}
 
-		err = ioutil.WriteFile(fileName, data, os.ModePerm)
-		if err != nil {
-			log.Printf("worker %d: error saving Topic %d to disc, %v\n", workerID, vkapiTopic.ID, err)
-			continue
+		if updating {
+			log.Printf("worker %d: topic %d updated\n", workerID, vkapiTopic.ID)
+		} else {
+			log.Printf("worker %d: topic %d created\n", workerID, vkapiTopic.ID)
 		}
 	}
-}
-
-func fileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
+	wg.Done()
 }
