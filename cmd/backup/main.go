@@ -29,7 +29,11 @@ type Settings struct {
 
 const settingsFile = "settings.yml"
 
-var wg sync.WaitGroup
+var (
+	wg                     sync.WaitGroup
+	topicIsBeenChecked     = map[int]int{}
+	topicIsBeenCheckedLock sync.Mutex
+)
 
 func main() {
 	settings := Settings{
@@ -155,23 +159,39 @@ func main() {
 
 func work(workerID int, topicStorage storage.Storage, topicChan <-chan vkapi.Topic, client *vkapi.VKClient, groupID int) {
 	for vkapiTopic := range topicChan {
-		log.Printf("worker %d: checking topic %d\n", workerID, vkapiTopic.ID)
+
+		shouldSkip := false
+		for _, workingTopic := range topicIsBeenChecked {
+			if vkapiTopic.ID == workingTopic {
+				shouldSkip = true
+			}
+		}
+
+		if shouldSkip {
+			continue
+		}
+
+		topicIsBeenCheckedLock.Lock()
+		topicIsBeenChecked[workerID] = vkapiTopic.ID
+		topicIsBeenCheckedLock.Unlock()
+
+		log.Printf("worker %d: checking topic %s(%d)\n", workerID, vkapiTopic.Title, vkapiTopic.ID)
 
 		updating := false
 
 		topicFromStorage, err := topicStorage.Find(vkapiTopic.ID)
 		if err != nil {
-			log.Printf("worker %d:error reading topic %d from storage, %v\n", workerID, vkapiTopic.ID, err)
+			log.Printf("worker %d: error reading topic %s(%d) from storage, %v\n", workerID, vkapiTopic.Title, vkapiTopic.ID, err)
 			continue
 		}
 
 		if topicFromStorage.ID != 0 && vkapiTopic.Updated == topicFromStorage.UpdatedAt {
-			log.Printf("worker %d:topic %d already updated\n", workerID, topicFromStorage.ID)
+			log.Printf("worker %d: topic %s(%d) already updated\n", workerID, vkapiTopic.Title, vkapiTopic.ID)
 			continue
 		}
 
 		if topicFromStorage.UpdatedAt > vkapiTopic.Updated {
-			log.Printf("worker %d:topic %d is older than topic from database\n", workerID, topicFromStorage.ID)
+			log.Printf("worker %d: topic %s(%d) is older than topic from database\n", workerID, vkapiTopic.Title, vkapiTopic.ID)
 			continue
 		}
 
@@ -179,24 +199,24 @@ func work(workerID int, topicStorage storage.Storage, topicChan <-chan vkapi.Top
 			updating = true
 		}
 
-		log.Printf("worker %d: downloading topic %d\n", workerID, vkapiTopic.ID)
+		log.Printf("worker %d: downloading topic %s(%d)\n", workerID, vkapiTopic.Title, vkapiTopic.ID)
 
 		topic, err := topicToJSON.SaveTopic(client, groupID, vkapiTopic.ID)
 		if err != nil {
-			log.Printf("worker %d: error downloading topic %d, %v\n", workerID, vkapiTopic.ID, err)
+			log.Printf("worker %d: error downloading topic %s(%d), %v\n", workerID, vkapiTopic.Title, vkapiTopic.ID, err)
 			continue
 		}
 
 		err = topicStorage.Save(topic)
 		if err != nil {
-			log.Printf("worker %d: error saving topic %d on storage, %v\n", workerID, vkapiTopic.ID, err)
+			log.Printf("worker %d: error saving topic %s(%d) on storage, %v\n", workerID, vkapiTopic.Title, vkapiTopic.ID, err)
 			continue
 		}
 
 		if updating {
-			log.Printf("worker %d: topic %d updated\n", workerID, vkapiTopic.ID)
+			log.Printf("worker %d: topic %s(%d) updated\n", workerID, vkapiTopic.Title, vkapiTopic.ID)
 		} else {
-			log.Printf("worker %d: topic %d created\n", workerID, vkapiTopic.ID)
+			log.Printf("worker %d: topic %s(%d) created\n", workerID, vkapiTopic.Title, vkapiTopic.ID)
 		}
 	}
 	wg.Done()
